@@ -1,0 +1,15 @@
+{
+  "compilerOptions": {
+    "target": "ES2020", // Modern JS features
+    "module": "CommonJS", // Use CommonJS for compatibility with most Node.js setups
+    "rootDir": "./src", // Source files live here
+    "outDir": "./build", // Compiled JS will go here
+    "moduleResolution": "node", // Match Node.js behavior
+    "esModuleInterop": true, // Allow `import express from 'express'`
+    "forceConsistentCasingInFileNames": true,
+    "strict": true, // Enable all strict type checking
+    "skipLibCheck": true // Speed up compilation by skipping .d.ts checks
+  },
+  "include": ["src"], // Include only your source files
+  "exclude": ["node_modules", "build"] // Exclude compiled files and deps
+}
