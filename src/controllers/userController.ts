@@ -1,6 +1,15 @@
 import { NextFunction, Request, Response } from "express";
 import User from "../database/schemas/userSchema";
-import { RegisterBody, UserI } from "../interfaces";
+import {
+  AggregateAllPosts,
+  AggregateFollowing,
+  FollowingI,
+  ModifiedPostsI,
+  PostBetweenDatesI,
+  PostCountI,
+  RegisterBody,
+  UserI,
+} from "../interfaces";
 import Post from "../database/schemas/postSchema";
 import Comment from "../database/schemas/commentSchema";
 import mongoose from "mongoose";
@@ -32,7 +41,7 @@ export const loginUser = (
   // const { user } = req;
   if (!req.user)
     return res.status(401).send({ msg: "Please Authenticate first" });
-  const user = (req.user as any).toObject();
+  const user = (req.user as UserI).toObject();
   const { password, ...rest } = user;
   return res.status(200).send({ msg: "Login Successful", user: rest });
 };
@@ -54,7 +63,7 @@ export const addPost = async (
   const { user } = req;
   let body = req.body;
   if (!user) return res.status(401).send({ msg: "Please Authenticate first" });
-  body = { ...body, createdBy: user._id, createdOn: new Date() };
+  body = { ...body, createdBy: (user as UserI)._id, createdOn: new Date() };
   try {
     const newPost = await new Post(body).save();
     return res
@@ -74,9 +83,7 @@ export const getAllPosts = async (
 ) => {
   const { user } = req;
   try {
-    // const posts = await Post.find({}).populate("createdBy", "-password");
-    const posts = await Post.aggregate([
-      // lookup, unwind, project to show the created user
+    const posts = await Post.aggregate<AggregateAllPosts>([
       {
         $lookup: {
           from: "users",
@@ -93,7 +100,6 @@ export const getAllPosts = async (
           "user.password": 0,
         },
       },
-      // code to show the comments, noOfComments on each post
       {
         $lookup: {
           from: "comments",
@@ -108,31 +114,49 @@ export const getAllPosts = async (
         },
       },
     ]);
-    const followingObject = await Follower.aggregate([
-      {
-        $match: { userId: user?._id },
-      },
-      {
-        $group: {
-          _id: "$userId",
-          followings: { $push: "$following" },
-        },
-      },
+    const matchResult = await Follower.aggregate([
+      { $match: { userId: user?._id } },
     ]);
-    const followingArr = followingObject[0].followings.map((id: any) => {
-      return id.toString();
-    });
-    const modifiedPosts = posts.map((post) => {
-      const isFollowing = followingArr.includes(post.createdBy.toString());
-      return { ...post, following: isFollowing };
-    });
+    let followingObject;
+    // if there are no documents returned by match pipeline, then return an empty array for followings
+    if (matchResult.length === 0) {
+      followingObject = [{ _id: null, followings: [] }];
+    } else {
+      followingObject = (await Follower.aggregate([
+        {
+          $match: { userId: user?._id },
+        },
+        {
+          $group: {
+            _id: "$userId",
+            followings: { $push: "$following" },
+          },
+        },
+      ])) as AggregateFollowing[];
+    }
 
-    return res.status(200).send({
-      msg: "All Posts",
-      // followingObject,
-      // typeofElement: typeof followingArr[0],
-      modifiedPosts,
-    });
+    let modifiedPosts;
+    // if the user is following someone, then we need to add a field called following in each post
+    if (followingObject[0].followings.length > 0) {
+      const followingArr = followingObject[0].followings.map((x: any) => {
+        return x.toString();
+      }) as [string];
+      modifiedPosts = posts.map((post) => {
+        const isFollowing = followingArr.includes(post.createdBy.toString());
+        return { ...post, following: isFollowing };
+      }) as ModifiedPostsI[];
+      return res.status(200).send({
+        msg: "All Posts",
+        modifiedPosts,
+      });
+      // if the user is not following anyone, then we need to add a field called following with a value of false in each post
+    } else {
+      modifiedPosts = posts.map((post) => {
+        return { ...post, following: false };
+      }) as ModifiedPostsI[];
+
+      return res.status(200).send({ msg: "All Posts", modifiedPosts });
+    }
   } catch (err) {
     return res.status(400).send({
       msg: "Error in route /getAllPosts",
@@ -148,7 +172,7 @@ export const getPostCount = async (
 ) => {
   // return res.status(200).send({ msg: "Post Count", count: 10 });
   try {
-    const result = await Post.aggregate([
+    const result = (await Post.aggregate([
       {
         $group: {
           _id: "$createdBy",
@@ -175,7 +199,7 @@ export const getPostCount = async (
           "user.password": 0,
         },
       },
-    ]);
+    ])) as PostCountI[];
     return res.status(200).send({ msg: "Post Count", count: result });
   } catch (err) {
     return res.status(400).send({
@@ -186,13 +210,13 @@ export const getPostCount = async (
 };
 
 export const getPostsBetweenDates = async (
-  req: Request,
+  req: Request<{}, {}, { startDate: string; endDate: string }>,
   res: Response,
   next: NextFunction
 ) => {
   // return res.status(200).send({ msg: "Post Count", count: 10 });
   const { startDate, endDate } = req.body;
-  let result = await Post.aggregate([
+  let result = (await Post.aggregate([
     {
       $match: {
         createdOn: {
@@ -201,9 +225,12 @@ export const getPostsBetweenDates = async (
         },
       },
     },
-  ]);
-  result.push({ totalLength: result.length });
-  return res.status(200).send({ msg: "Post Between Dates", result: result });
+  ])) as PostBetweenDatesI[];
+  return res.status(200).send({
+    msg: "Post Between Dates",
+    result: result,
+    totalLength: result.length,
+  });
 };
 
 export const addComment = async (
@@ -261,7 +288,7 @@ export const getFollowings = async (
   next: NextFunction
 ) => {
   try {
-    const result = await Follower.aggregate([
+    const result = (await Follower.aggregate([
       {
         $group: {
           _id: "$userId",
@@ -283,13 +310,18 @@ export const getFollowings = async (
         $unwind: "$following_user_details",
       },
       {
+        $project: {
+          "following_user_details.password": 0,
+        },
+      },
+      {
         $group: {
           _id: "$_id",
           followingIds: { $push: "$following" },
           followingUserDetails: { $push: "$following_user_details" },
         },
       },
-    ]);
+    ])) as FollowingI[];
 
     return res.status(200).send(result);
   } catch (err) {
