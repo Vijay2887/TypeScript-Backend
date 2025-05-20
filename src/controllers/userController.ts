@@ -138,9 +138,11 @@ export const getAllPosts = async (
     let modifiedPosts;
     // if the user is following someone, then we need to add a field called following in each post
     if (followingObject[0].followings.length > 0) {
-      const followingArr = followingObject[0].followings.map((x: any) => {
-        return x.toString();
-      }) as [string];
+      const followingArr = followingObject[0].followings.map(
+        (x: mongoose.Types.ObjectId) => {
+          return x.toString();
+        }
+      ) as [string];
       modifiedPosts = posts.map((post) => {
         const isFollowing = followingArr.includes(post.createdBy.toString());
         return { ...post, following: isFollowing };
